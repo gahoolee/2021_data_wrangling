@@ -1,0 +1,195 @@
+---
+title: "Final Project"
+author: "Jiahao Li"
+date: "4/212/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r}
+library(readr);library(ggplot2);library(leaps);library(tidyverse);library(caret);library(faraway);library(MASS);library(modelr);library(magrittr);library(gplots);library(corrplot);library(Amelia)
+library(kaggler)#devtools::install_github("ldurazo/kaggler")
+```
+## Download the data from Kaggle
+```{r}
+#https://www.kaggle.com/hellbuoy/car-price-prediction?select=CarPrice_Assignment.csv
+#setwd("~/Desktop/data wrangling/final")
+
+kgl_auth(username="gahooli", key="4f5f97bace99569ba99952a99c550049") 
+response <- kgl_datasets_download_all(owner_dataset = "hellbuoy/car-price-prediction")#API
+
+download.file(response[["url"]], "temp.zip", mode="wb")
+unzip_result <- unzip("temp.zip", overwrite = TRUE)
+df <- read_csv("CarPrice_Assignment.csv")
+```
+
+## Read the data
+```{r}
+DATA <- as.data.frame(df[,-1])
+missmap(DATA) #There is no missing data
+```
+
+  + In this dataset, There are 205 observations and 26 variables without missing value. It contain both categorical and numerical variables. Each observation represent a car and the variables describe the features of the car.
+
+## Data Cleaning 
+```{r}
+# Correct the typo
+length(unique(DATA$CarName))
+DATA$CarName <- gsub("maxda", "mazda", DATA$CarName)
+DATA$CarName <- gsub("nissan", "Nissan", DATA$CarName)
+DATA$CarName <- gsub("porcshce", "porsche", DATA$CarName)
+DATA$CarName <- gsub("toyouta", "toyota", DATA$CarName)
+DATA$CarName <- gsub("vokswagen", "volkswagen", DATA$CarName)
+DATA$CarName <- gsub("vw", "volkswagen", DATA$CarName)
+
+# I think the car model is too sepecific and there are some without model, so I decide to change them as car brand.
+
+DATA$CarName[grepl("alfa-romero", DATA$CarName)] <- "Alfa-Romero"
+DATA$CarName[grepl("bmw", DATA$CarName)] <- "BMW"
+DATA$CarName[grepl("audi", DATA$CarName)] <- "Audi"
+DATA$CarName[grepl("buick", DATA$CarName)] <- "Buick"
+DATA$CarName[grepl("chevrolet", DATA$CarName)] <- "Chevrolet"
+DATA$CarName[grepl("dodge", DATA$CarName)] <- "Dodge"
+DATA$CarName[grepl("honda", DATA$CarName)] <- "Honda"
+DATA$CarName[grepl("isuzu", DATA$CarName)] <- "Isuzu"
+DATA$CarName[grepl("jaguar", DATA$CarName)] <- "Jaguar"
+DATA$CarName[grepl("mazda", DATA$CarName)] <- "Mazda"
+DATA$CarName[grepl("mitsubishi", DATA$CarName)] <- "Mitsubishi"
+DATA$CarName[grepl("issan", DATA$CarName)] <- "Nissan"
+DATA$CarName[grepl("peugeot", DATA$CarName)] <- "Peugeot"
+DATA$CarName[grepl("plymouth", DATA$CarName)] <- "Plymouth"
+DATA$CarName[grepl("porsche", DATA$CarName)] <- "Porsche"
+DATA$CarName[grepl("renault", DATA$CarName)] <- "Renault"
+DATA$CarName[grepl("saab", DATA$CarName)] <- "Saab"
+DATA$CarName[grepl("subaru", DATA$CarName)] <- "Subaru"
+DATA$CarName[grepl("volkswagen", DATA$CarName)] <- "Volkswagen"
+DATA$CarName[grepl("volvo", DATA$CarName)] <- "Volvo"
+DATA$CarName[grepl("toyota", DATA$CarName)] <- "Toyota"
+DATA$CarName[grepl("mercury", DATA$CarName)] <- "Mercury"
+
+length(unique(DATA$CarName))
+
+DATA$symboling <- as.factor(DATA$symboling) # since it is numeric, I need to as.factor manually
+```
+
+  + The CarName here shows the the models which is too specific for me, so I delete the model and only keep the car brand. There are 22 car brands.
+
+* Create two new variables which  
+```{r}
+#categorical the mean of price of car brands into three groups
+average_price <- DATA %>% 
+  mutate(brands = factor(CarName)) %>% 
+  group_by(brands) %>%    
+  summarise(average= mean(price,na.rm=T)) %>% 
+  arrange(-average) %>%   
+  mutate(brands = factor(brands, brands))
+
+average_price$categorical <- as.factor(cut(average_price$average, breaks=c(0,10000,20000,40000), labels=c('normal','medium','luxury')))
+average_price$brands <- as.factor(average_price$brands)
+
+for(i in 1:nrow(DATA)){
+  for(j in 1:nrow(average_price)){
+    if(DATA[i,c("CarName")] == average_price[j,c("brands")])
+        DATA[i,"categorical_price"] = (average_price[j,c("categorical")])
+    }
+}
+```
+
+  + Since there are 22 different car brands which is too much. Instead of just  deleted them, I decide to convert them into this three levels. 
+
+## Plots
+```{r}
+# Toyota is the most popular.
+ggplot(DATA, aes(x=CarName))+
+  geom_histogram(stat='count',fill="#69b3a2", color="#e9ecef")+
+  theme_bw()+
+  labs(x='CarName',y='number of sales') +
+  labs(title = 'Bar plot of the sales number of each CarName')
+```
+
+  + I count the number of sales for each brand of car. It is not surprise that Toyota is most popular. The top five popular cars are all from Japan. I think this situation happens because of Ford is not in this data.
+
+```{r}
+# Jugar, Buick, and Porsche are the three most expensive brand. It may be reason why they have low sales number.
+ggplot(DATA, aes(x=reorder(CarName,-price), y=price)) + 
+  stat_summary(fun.y="mean", geom="bar", fill="#69b3a2", color="#e9ecef") +
+  theme_bw()+
+  labs(x='CarName',y='mean price') +
+  labs(title = 'Histogram of the mean price of each CarName')
+```
+
+  + Since the price of the cars are different even though they have same car brand. So  I calculate the mean price for each car brand. This graph shows the mean price for each car brands.From this graph, The top 3 are all from European except Buick from America.
+
+```{r}
+# The car with less city mpg has more cylinder and cost more.
+ggplot(DATA, aes(x=citympg, y=price, shape=cylindernumber,color=cylindernumber)) +
+  geom_point(shape=16, size=3) + xlab("mile per gallon") +
+  labs(title = 'Scattle of the price of mile per gallon')
+```
+
+  + The car with less city mpg and more number of cylinder will cost more money, like sport car spend more gas than a Toyota Prius.  Higher mile per gallon has lesser number of cylinder and cheaper. From this, we also know that more cylinder will lower the mile per gallon of the car. Because of these luxury cars expand more gas and not environmentally friendly, most car companies are now reducing the twelve and eight cylinder.  it will lower the performance of the luxury car. The mile per gallon and price of the car are negatively correlative to each other.
+
+```{r}
+# The horsepower and price are positivly correlate to each other.
+ggplot(DATA, aes(x=horsepower, y=price, shape=enginetype,color=enginetype)) +
+  geom_point(shape=16, size=4) +
+  labs(title = 'Scattle of the price of horspower')
+```
+
+  + More horsepower, the more expensive the car cost. They are positive correlative to each other. The l engine is cheapest.  Dohcv and ohcv are most expensive.
+
+```{r}
+# The car with larger engine size will cost more.
+ggplot(DATA, aes(x=enginesize, y=price)) +
+  geom_point(shape=16, size=2) +
+  labs(title = 'Scattle of the price of engine size')
+```
+
+  + Larger engine size will cost higher price.
+
+```{r}
+ind_numeric <- sapply(DATA, function(x)c(is.numeric(x))) # find out the non dummy variables
+
+#Heat map for correlation
+correlations <- cor(DATA[,sapply(DATA, is.numeric) & colnames(DATA) != "id"])
+corrplot(correlations, method="circle")
+```
+
+  + From this heat map, we can tell the there are many variables are high correlate to each other. Since these numeric variables have different unit, I normalize them to a common scale, without distorting differences in the ranges of values.
+
+
+## Numeric variables scaling
+```{r}
+ #ind_numeric is the non dummy variables.
+DATA[ind_numeric] <- lapply(DATA[ind_numeric], scale)
+```
+
+
+## Linear Model with all predictors
+```{r}
+set.seed(1)
+#Cross Validation
+data_ctrl <- trainControl(method = "cv", number = 10)
+
+model_caret <- caret::train(price~.,   # model to fit 0.3555092  0.9060987  0.2556883
+                     data = DATA,                        
+                     trControl = data_ctrl,              # folds
+                     method = "lm",                      # specifying regression model
+                     na.action = na.omit)                # pass missing data to model - some models will handle this
+model_caret
+```
+
+  + According to the RMSE, R-square, and MAE of the linear model with all predictors, The linear model with all predictors that train by 10-fold cross validation has good performance.
+
+```{r}
+ggplot(varImp(model_caret))
+```
+
+  + Since the model has pretty good performance, I can conclude that rear engine location, curb weight of the car, and enginesize are the three most important features to determin the price of the car.
+
+
+
+
+
